@@ -1,0 +1,38 @@
+{
+  "name": "messenger-demo-backend",
+  "version": "0.1.0",
+  "description": "Demo backend for a GraphQL messenger",
+  "main": "index.js",
+  "author": "nikis05",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "nodemon ./src/index.ts",
+    "build": "rm -rf build && tsc",
+    "prod": "NODE_ENV=production node -r ./tsconfig-paths-bootstrap.js dist/index.js"
+  },
+  "dependencies": {
+    "@types/bcryptjs": "^2.4.2",
+    "@types/jsonwebtoken": "^8.3.5",
+    "apollo-server-express": "^2.9.12",
+    "bcryptjs": "^2.4.3",
+    "express": "^4.17.1",
+    "jsonwebtoken": "^8.5.1",
+    "pg": "^7.14.0",
+    "reflect-metadata": "^0.1.13",
+    "tsconfig-paths": "^3.9.0",
+    "type-graphql": "^0.17.5",
+    "typedi": "^0.8.0",
+    "typeorm": "^0.2.20",
+    "typeorm-typedi-extensions": "^0.2.3",
+    "typescript": "^3.7.2"
+  },
+  "devDependencies": {
+    "dotenv": "^8.2.0",
+    "nodemon": "^2.0.1",
+    "prettier": "^1.19.1",
+    "ts-node": "^8.5.4",
+    "tslint": "^5.20.1",
+    "tslint-config-prettier": "^1.18.0"
+  }
+}
