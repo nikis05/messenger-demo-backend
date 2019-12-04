@@ -16,17 +16,18 @@ export class Message extends Node {
   messenger!: Lazy<Messenger>;
 
   @Field(_type => User)
-  @ManyToOne(_with => User)
+  @ManyToOne(_with => User, { lazy: true })
   sender!: Lazy<User>;
 
   @Field()
   @Column()
   text!: string;
 
-  @Field()
-  @ManyToOne(_with => Message, { lazy: true })
+  @Field(_type => Message, { nullable: true })
+  @ManyToOne(_with => Message, { lazy: true, onDelete: 'SET NULL' })
   respondsTo!: Lazy<Message | null>;
 
+  @Field()
   @CreateDateColumn()
   createdAt!: Date;
 

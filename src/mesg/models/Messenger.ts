@@ -21,7 +21,7 @@ export class Messenger extends Node {
   @Column()
   title!: string;
 
-  @ManyToOne(_with => User, { lazy: true })
+  @ManyToOne(_with => User, { lazy: true, onDelete: 'CASCADE' })
   admin!: Lazy<User>;
 
   @ManyToMany(_with => User, { lazy: true })
@@ -35,8 +35,12 @@ export class Messenger extends Node {
   )
   messages!: Lazy<Message[]>;
 
-  @Field(_type => Message)
-  @OneToOne(_with => Message, { lazy: true, nullable: true })
+  @Field(_type => Message, { nullable: true })
+  @OneToOne(_with => Message, {
+    lazy: true,
+    nullable: true,
+    onDelete: 'SET NULL'
+  })
   @JoinColumn()
   pinnedMessage!: Lazy<Message | null>;
 }

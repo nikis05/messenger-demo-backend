@@ -40,8 +40,7 @@ export class SessionService {
     @Ctx() { callerId, sessionId }: Context
   ): Promise<Session> {
     await this.repo.delete({ user: { id: callerId }, id: Not(sessionId) });
-    const session = await this.repo.findOneOrFail(sessionId);
-    return session;
+    return this.repo.findOneOrFail(sessionId);
   }
 
   @Mutation(_returns => Boolean, { description: 'Logs caller out' })
@@ -58,6 +57,7 @@ export class SessionService {
     session.user = user;
 
     await this.repo.save(session);
+    this.jwtWhitelistService.accept(session.id);
 
     const accessToken = await SessionService.generateAccessToken({
       callerId: user.id,
@@ -71,8 +71,7 @@ export class SessionService {
     await this.repo.delete({ id });
   }
 
-  async terminateOutdatedSessions(user: User): Promise<void> {
-    const sessions = await user.sessions;
+  async terminateOutdatedSessions(sessions: Session[]): Promise<void> {
     if (sessions.length < 5) return;
     const oldestSession = sessions.reduce((currentOldest, currentChecked) => {
       return currentOldest.lastUsed.getTime() >

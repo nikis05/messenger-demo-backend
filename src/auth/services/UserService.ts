@@ -1,13 +1,12 @@
-import { ApolloError, UserInputError } from 'apollo-server-express';
+import { ForbiddenError, UserInputError } from 'apollo-server-express';
 import { UserCreateInput } from 'auth/inputs/UserCreateInput';
-import { Session } from 'auth/models/Session';
 import { Tokens } from 'auth/models/Tokens';
 import { User } from 'auth/models/User';
 import { compare, hash } from 'bcryptjs';
 import { Context } from 'Context';
 import { Arg, Ctx, Mutation, Query, Resolver } from 'type-graphql';
 import { Inject, Service } from 'typedi';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import { InjectRepository } from 'typeorm-typedi-extensions';
 import { JwtWhitelistService } from './JwtWhitelistService';
 import { SessionService } from './SessionService';
@@ -28,6 +27,12 @@ export class UserService {
     return user;
   }
 
+  @Query(_returns => User, { nullable: true })
+  async user(@Arg('login') login: string): Promise<User | null> {
+    const user = await this.repo.findOne({ login });
+    return user || null;
+  }
+
   @Mutation(_returns => Tokens, {
     description: 'Registers new user in the system'
   })
@@ -35,6 +40,12 @@ export class UserService {
     @Arg('input', { description: 'Data of created user' })
     input: UserCreateInput
   ): Promise<Tokens> {
+    const existingUsersWithLoginCount = await this.repo.count({
+      login: input.login
+    });
+    if (existingUsersWithLoginCount !== 0)
+      throw new ForbiddenError('A user with this login already exists');
+
     const user = this.repo.create(input);
     user.saltedPassword = await UserService.saltPassword(input.password);
     await this.repo.save(user);
@@ -42,22 +53,25 @@ export class UserService {
     return this.sessionService.openSession(user);
   }
 
-  @Mutation()
+  @Mutation(_returns => Tokens)
   async logIn(
     @Arg('login') login: string,
     @Arg('password') password: string
   ): Promise<Tokens> {
-    const user = await this.repo.findOne({ login });
+    const user = await this.repo.findOne(
+      { login },
+      { relations: ['sessions'] }
+    );
     if (!user) throw new UserInputError('No user found with this login');
 
     await UserService.verifyPassword(user, password);
 
-    await this.sessionService.terminateOutdatedSessions(user);
+    await this.sessionService.terminateOutdatedSessions(await user.sessions);
 
     return this.sessionService.openSession(user);
   }
 
-  @Mutation()
+  @Mutation(_returns => Boolean)
   async changePassword(
     @Arg('oldPassword') oldPassword: string,
     @Arg('newPassword') newPassword: string,
@@ -71,7 +85,7 @@ export class UserService {
     return true;
   }
 
-  @Mutation()
+  @Mutation(_returns => Boolean)
   async deleteAccount(
     @Arg('password') password: string,
     @Ctx() { callerId }: Context
@@ -81,16 +95,23 @@ export class UserService {
     });
     await UserService.verifyPassword(user, password);
 
-    (user.sessions as Session[]).forEach(session =>
-      this.jwtWhitelistService.revoke(session.id)
-    );
+    const sessions = await user.sessions;
+
+    sessions.forEach(session => this.jwtWhitelistService.revoke(session.id));
 
     await this.repo.remove(user);
     return true;
   }
 
-  findByIds(ids: string[]) {
-    return this.repo.findByIds(ids);
+  findOne(id: string): Promise<User> {
+    return this.repo.findOneOrFail(id);
+  }
+
+  async findMany(ids: string[]): Promise<User[]> {
+    const users = await this.repo.find({ id: In(ids) });
+    if (users.length !== ids.length)
+      throw new UserInputError('No users found for provided ids');
+    return users;
   }
 
   static saltPassword(password: string): Promise<string> {

@@ -2,8 +2,8 @@
   "type": "postgres",
   "host": "localhost",
   "port": 5432,
-  "username": "admin",
-  "database": "admin",
+  "username": "messenger-demo-backend",
+  "database": "messenger-demo-backend",
   "entities": ["./src/**/models/*.ts"],
   "synchronize": true,
   "logging": ["error"]

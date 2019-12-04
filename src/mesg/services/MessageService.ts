@@ -1,11 +1,12 @@
 import { UserInputError } from 'apollo-server-express';
+import { UserService } from 'auth/services/UserService';
 import { Context } from 'Context';
 import { MessageCreateInput } from 'mesg/inputs/MessageCreateInput';
 import { MessageWhereInput } from 'mesg/inputs/MessageWhereInput';
 import { Message } from 'mesg/models/Message';
 import { Arg, Ctx, ID, Mutation, Resolver } from 'type-graphql';
 import { Inject, Service } from 'typedi';
-import { Repository, LessThan, MoreThan } from 'typeorm';
+import { LessThan, MoreThan, Repository } from 'typeorm';
 import { InjectRepository } from 'typeorm-typedi-extensions';
 import { MessengerService } from './MessengerService';
 
@@ -15,6 +16,7 @@ export class MessageService {
   @InjectRepository(Message) private repo!: Repository<Message>;
   @Inject(_service => MessengerService)
   private messengerService!: MessengerService;
+  @Inject(_service => UserService) private userService!: UserService;
 
   @Mutation(_returns => Message)
   async postMessage(
@@ -22,11 +24,12 @@ export class MessageService {
     @Arg('input') input: MessageCreateInput,
     @Ctx() { callerId }: Context
   ): Promise<Message> {
-    await this.messengerService.userCanWriteTo(messengerId, callerId);
-
     const message = this.repo.create(input);
-    this.repo.merge(message, { messenger: { id: messengerId } });
-    this.repo.merge(message, { sender: { id: callerId } });
+    message.sender = await this.userService.findOne(callerId);
+    message.messenger = await this.messengerService.accessOne({
+      userId: callerId,
+      messengerId
+    });
 
     if (input.respondsToId) {
       const respondsToMessage = await this.repo.findOne({
@@ -41,7 +44,8 @@ export class MessageService {
 
     message.isEdited = false;
 
-    return this.repo.save(message);
+    await this.repo.save(message);
+    return message;
   }
 
   @Mutation(_returns => Message)
@@ -56,6 +60,7 @@ export class MessageService {
         'No message found with this id, or user is not its sender'
       );
     message.text = newText;
+    message.isEdited = true;
     return this.repo.save(message);
   }
 
@@ -78,9 +83,9 @@ export class MessageService {
 
   async findMany(
     messengerId: string,
-    input: MessageWhereInput
+    where: MessageWhereInput
   ): Promise<Message[]> {
-    const { around, before, after } = input;
+    const { around, before, after } = where;
     if (around) {
       const aroundMessage = await this.repo.findOne({
         id: around,
@@ -103,7 +108,9 @@ export class MessageService {
           .find(Message, {
             where: {
               messenger: { id: messengerId },
-              createdAt: MoreThan(aroundMessage.createdAt)
+              createdAt: MoreThan(
+                new Date(aroundMessage.createdAt.getTime() + 1)
+              )
             },
             order: { createdAt: 'ASC' },
             take: 15
@@ -114,18 +121,34 @@ export class MessageService {
       });
     }
 
-    return this.repo.find({
-      where: {
-        messenger: { id: messengerId },
-        ...(before
-          ? {
-              createdAt: LessThan(before)
-            }
-          : {
-              createdAt: MoreThan(after)
-            })
-      },
-      order: { createdAt: before ? 'DESC' : 'ASC' }
+    return this.repo
+      .find({
+        where: {
+          messenger: { id: messengerId },
+          ...(before
+            ? {
+                createdAt: LessThan(before)
+              }
+            : {
+                createdAt: MoreThan(new Date(after!.getTime() + 1))
+              })
+        },
+        order: { createdAt: before ? 'DESC' : 'ASC' },
+        take: 30
+      })
+      .then(messages => (after ? messages.slice().reverse() : messages));
+  }
+
+  count({
+    messengerId,
+    after
+  }: {
+    messengerId: string;
+    after?: Date;
+  }): Promise<number> {
+    return this.repo.count({
+      messenger: { id: messengerId },
+      ...(after ? { createdAt: MoreThan(after) } : {})
     });
   }
 }

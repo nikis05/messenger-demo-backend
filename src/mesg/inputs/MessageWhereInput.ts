@@ -1,13 +1,13 @@
-import { Field, InputType } from 'type-graphql';
+import { Field, ID, InputType } from 'type-graphql';
 
 @InputType()
 export class MessageWhereInput {
   @Field({ nullable: true })
-  before?: string;
+  before?: Date;
 
   @Field({ nullable: true })
-  after?: string;
+  after?: Date;
 
-  @Field({ nullable: true })
+  @Field(_type => ID, { nullable: true })
   around?: string;
 }
