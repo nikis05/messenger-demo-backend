@@ -31,6 +31,8 @@ input MessageWhereInput {
 type Messenger {
   id: ID!
   title: String!
+  admin: User!
+  members: User!
   pinnedMessage: Message
   messages(where: MessageWhereInput!): [Message!]!
   numUnreadMessages: Int!
@@ -87,6 +89,16 @@ type Query {
 type Session {
   id: ID!
   lastUsed: DateTime!
+}
+
+type Subscription {
+  userInvitedToMessenger: Messenger!
+  userLeftMessenger(messengerId: String!): Messenger!
+  pinMessageChanged(messengerId: String!): Messenger!
+  messengerDeleted(id: String!): ID!
+  messagePosted(messengerId: ID!): Message!
+  messageEdited(messegerId: ID!): Message!
+  messageDeleted: ID!
 }
 
 type Tokens {

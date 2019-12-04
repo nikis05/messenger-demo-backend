@@ -4,15 +4,49 @@ import { Context } from 'Context';
 import { MessageCreateInput } from 'mesg/inputs/MessageCreateInput';
 import { MessageWhereInput } from 'mesg/inputs/MessageWhereInput';
 import { Message } from 'mesg/models/Message';
-import { Arg, Ctx, ID, Mutation, Resolver } from 'type-graphql';
-import { Inject, Service } from 'typedi';
+import {
+  Arg,
+  Ctx,
+  ID,
+  Mutation,
+  PubSub,
+  PubSubEngine,
+  Resolver,
+  Root,
+  Subscription
+} from 'type-graphql';
+import Container, { Inject, Service } from 'typedi';
 import { LessThan, MoreThan, Repository } from 'typeorm';
 import { InjectRepository } from 'typeorm-typedi-extensions';
 import { MessengerService } from './MessengerService';
 
+const subscriptionsFilterFn = async ({
+  payload,
+  args,
+  context
+}: {
+  payload: { messengerId: string };
+  args: { messengerId: string };
+  context: Context;
+}) => {
+  return (
+    payload.messengerId === args.messengerId &&
+    Container.get(MessengerService).userCanAccess(
+      context.callerId,
+      payload.messengerId
+    )
+  );
+};
+
 @Service()
 @Resolver(_of => Message)
 export class MessageService {
+  private static SubscriptionTopics = {
+    MessagePosted: 'MessagePosted',
+    MessageEdited: 'MessageEdited',
+    MessageDeleted: 'MessageDeleted'
+  };
+
   @InjectRepository(Message) private repo!: Repository<Message>;
   @Inject(_service => MessengerService)
   private messengerService!: MessengerService;
@@ -20,9 +54,10 @@ export class MessageService {
 
   @Mutation(_returns => Message)
   async postMessage(
+    @Ctx() { callerId }: Context,
+    @PubSub() pubSub: PubSubEngine,
     @Arg('messengerId', _type => ID) messengerId: string,
-    @Arg('input') input: MessageCreateInput,
-    @Ctx() { callerId }: Context
+    @Arg('input') input: MessageCreateInput
   ): Promise<Message> {
     const message = this.repo.create(input);
     message.sender = await this.userService.findOne(callerId);
@@ -43,42 +78,101 @@ export class MessageService {
     }
 
     message.isEdited = false;
-
     await this.repo.save(message);
+
+    await pubSub.publish(MessageService.SubscriptionTopics.MessagePosted, {
+      messengerId,
+      message
+    });
     return message;
   }
 
   @Mutation(_returns => Message)
   async editMessage(
+    @Ctx() { callerId }: Context,
+    @PubSub() pubSub: PubSubEngine,
     @Arg('id', _type => ID) id: string,
-    @Arg('newText') newText: string,
-    @Ctx() { callerId }: Context
+    @Arg('newText') newText: string
   ): Promise<Message> {
-    const message = await this.repo.findOne({ id, sender: { id: callerId } });
+    const message = await this.repo.findOne({
+      where: { id, sender: { id: callerId } },
+      relations: ['messenger']
+    });
     if (!message)
       throw new UserInputError(
         'No message found with this id, or user is not its sender'
       );
+
     message.text = newText;
     message.isEdited = true;
-    return this.repo.save(message);
+    await this.repo.save(message);
+
+    await pubSub.publish(MessageService.SubscriptionTopics.MessageEdited, {
+      messengerId: (await message.messenger).id,
+      message
+    });
+    return message;
   }
 
   @Mutation(_returns => ID)
   async deleteMessage(
+    @Ctx() { callerId }: Context,
     @Arg('id') id: string,
-    @Ctx() { callerId }: Context
+    @PubSub() pubSub: PubSubEngine
   ): Promise<string> {
-    const messageCount = await this.repo.count({
-      id,
-      sender: { id: callerId }
+    const message = await this.repo.findOne({
+      where: {
+        id,
+        sender: { id: callerId }
+      },
+      relations: ['messenger']
     });
-    if (messageCount === 0)
+    if (!message)
       throw new UserInputError(
         'No message found with this id, or user is not its sender'
       );
+
+    const messengerId = (await message.messenger).id;
+
     await this.repo.delete(id);
+
+    await pubSub.publish(MessageService.SubscriptionTopics.MessageDeleted, {
+      messengerId,
+      messageId: id
+    });
     return id;
+  }
+
+  @Subscription(_returns => Message, {
+    topics: MessageService.SubscriptionTopics.MessagePosted,
+    filter: subscriptionsFilterFn
+  })
+  messagePosted(
+    @Root() payload: { messengerId: string; message: Message },
+    @Arg('messengerId', _type => ID) _messegerId: string
+  ): Message {
+    return payload.message;
+  }
+
+  @Subscription(_returns => Message, {
+    topics: MessageService.SubscriptionTopics.MessageEdited,
+    filter: subscriptionsFilterFn
+  })
+  messageEdited(
+    @Root() payload: { messengerId: string; message: Message },
+    @Arg('messegerId', _type => ID) _messengerId: string
+  ): Message {
+    return payload.message;
+  }
+
+  @Subscription(_returns => ID, {
+    topics: MessageService.SubscriptionTopics.MessageDeleted,
+    filter: subscriptionsFilterFn
+  })
+  messageDeleted(
+    @Root() payload: { messengerId: string; messageId: string }
+  ): string {
+    return payload.messageId;
   }
 
   async findMany(

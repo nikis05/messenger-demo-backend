@@ -1,9 +1,9 @@
+import { User } from 'auth/models/User';
+import { Messenger } from 'mesg/models/Messenger';
 import { ReadRecord } from 'mesg/models/ReadRecord';
 import { Service } from 'typedi';
 import { Repository } from 'typeorm';
 import { InjectRepository } from 'typeorm-typedi-extensions';
-import { User } from 'auth/models/User';
-import { Messenger } from 'mesg/models/Messenger';
 
 @Service()
 export class ReadRecordService {

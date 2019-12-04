@@ -12,19 +12,43 @@ import {
   ID,
   Int,
   Mutation,
+  PubSub,
+  PubSubEngine,
   Query,
   Resolver,
-  Root
+  Root,
+  Subscription
 } from 'type-graphql';
-import { Inject, Service } from 'typedi';
+import Container, { Inject, Service } from 'typedi';
 import { Repository, SelectQueryBuilder } from 'typeorm';
 import { InjectRepository } from 'typeorm-typedi-extensions';
 import { MessageService } from './MessageService';
 import { ReadRecordService } from './ReadRecordService';
 
+const subscriptionsFilterFn = async ({
+  payload,
+  args,
+  context
+}: {
+  payload: { messenger: Messenger };
+  args: { messegerId: string };
+  context: Context;
+}) =>
+  (await Container.get(MessengerService).userCanAccess(
+    context.callerId,
+    payload.messenger.id
+  )) && args.messegerId === payload.messenger.id;
+
 @Service()
 @Resolver(_of => Messenger)
 export class MessengerService {
+  static SubscriptionTopics = {
+    UserInvitedToMessenger: 'UserInvitedToMessenger',
+    UserLeftMessenger: 'UserLeftMessenger',
+    PinMessageChanged: 'PinMessageChanged',
+    MessengerDeleted: 'MessengerDeleted'
+  };
+
   @InjectRepository(Messenger) private repo!: Repository<Messenger>;
   @Inject(_service => UserService) private userService!: UserService;
   @Inject(_service => MessageService) private messageService!: MessageService;
@@ -46,8 +70,9 @@ export class MessengerService {
 
   @Mutation(_returns => Messenger)
   async createMessenger(
-    @Arg('input') input: MessengerCreateInput,
-    @Ctx() { callerId }: Context
+    @Ctx() { callerId }: Context,
+    @PubSub() pubSub: PubSubEngine,
+    @Arg('input') input: MessengerCreateInput
   ): Promise<Messenger> {
     const messenger = this.repo.create(input);
     const caller = await this.userService.findOne(callerId);
@@ -60,13 +85,24 @@ export class MessengerService {
     }
     messenger.members = members;
 
-    return this.repo.save(messenger);
+    await this.repo.save(messenger);
+
+    await Promise.all(
+      messenger.members.map(member =>
+        pubSub.publish(
+          MessengerService.SubscriptionTopics.UserInvitedToMessenger,
+          { messenger, userId: member.id }
+        )
+      )
+    );
+    return messenger;
   }
 
   @Mutation(_returns => ID)
   async deleteMessenger(
-    @Arg('id', _type => ID) id: string,
-    @Ctx() { callerId }: Context
+    @PubSub() pubSub: PubSubEngine,
+    @Ctx() { callerId }: Context,
+    @Arg('id', _type => ID) id: string
   ): Promise<string> {
     const messenger = await this.accessOne({
       messengerId: id,
@@ -79,14 +115,22 @@ export class MessengerService {
         "You don't have permissions to delete this messenger"
       );
 
+    const memberIds = (await messenger.members).map(member => member.id);
+
     await this.repo.remove(messenger);
+
+    await pubSub.publish(MessengerService.SubscriptionTopics.MessengerDeleted, {
+      messengerId: id,
+      memberIds
+    });
     return id;
   }
 
   @Mutation(_returns => ID)
   async leaveMessenger(
-    @Arg('id', _type => ID) id: string,
-    @Ctx() { callerId }: Context
+    @Ctx() { callerId }: Context,
+    @PubSub() pubSub: PubSubEngine,
+    @Arg('id', _type => ID) id: string
   ): Promise<string> {
     const messenger = await this.accessOne({
       messengerId: id,
@@ -104,12 +148,18 @@ export class MessengerService {
       .relation('members')
       .of(messenger)
       .remove(callerId);
+
+    await pubSub.publish(
+      MessengerService.SubscriptionTopics.UserLeftMessenger,
+      { messenger }
+    );
     return id;
   }
 
   @Mutation(_returns => Messenger)
   async pinMessage(
     @Ctx() { callerId }: Context,
+    @PubSub() pubSub: PubSubEngine,
     @Arg('messengerId', _type => ID) messengerId: string,
     @Arg('messageId', _type => ID, { nullable: true }) messageId?: string
   ): Promise<Messenger> {
@@ -150,6 +200,10 @@ export class MessengerService {
         .set(pinnedMessage);
     }
 
+    await pubSub.publish(
+      MessengerService.SubscriptionTopics.PinMessageChanged,
+      { messenger }
+    );
     return messenger;
   }
 
@@ -165,6 +219,66 @@ export class MessengerService {
       new Date()
     );
     return this.repo.findOneOrFail(messengerId);
+  }
+
+  @Subscription(_returns => Messenger, {
+    topics: MessengerService.SubscriptionTopics.UserInvitedToMessenger,
+    filter: ({
+      payload,
+      context
+    }: {
+      payload: { userId: string };
+      context: Context;
+    }) => payload.userId === context.callerId
+  })
+  userInvitedToMessenger(@Root() payload: { messenger: Messenger }): Messenger {
+    return payload.messenger;
+  }
+
+  @Subscription(_returns => Messenger, {
+    topics: MessengerService.SubscriptionTopics.UserLeftMessenger,
+    filter: subscriptionsFilterFn
+  })
+  userLeftMessenger(
+    @Root() payload: { messenger: Messenger },
+    @Arg('messengerId') _messengerId: string
+  ): Messenger {
+    return payload.messenger;
+  }
+
+  @Subscription(_returns => Messenger, {
+    topics: MessengerService.SubscriptionTopics.PinMessageChanged,
+    filter: subscriptionsFilterFn
+  })
+  pinMessageChanged(
+    @Root() payload: { messenger: Messenger },
+    @Arg('messengerId') _messengerId: string
+  ): Messenger {
+    return payload.messenger;
+  }
+
+  @Subscription(_returns => ID, {
+    topics: MessengerService.SubscriptionTopics.MessengerDeleted,
+    filter: ({
+      payload,
+      args,
+      context
+    }: {
+      payload: { messegerId: string; memberIds: string[] };
+      args: { id: string };
+      context: Context;
+    }) => {
+      return (
+        payload.messegerId === args.id &&
+        payload.memberIds.includes(context.callerId)
+      );
+    }
+  })
+  messengerDeleted(
+    @Root() payload: { messengerId: string },
+    @Arg('id') _id: string
+  ): string {
+    return payload.messengerId;
   }
 
   @FieldResolver(_returns => [Message])
@@ -194,11 +308,13 @@ export class MessengerService {
   async accessOne({
     userId,
     messengerId,
-    loadAdmin
+    loadAdmin,
+    loadMembers
   }: {
     userId: string;
     messengerId: string;
     loadAdmin?: boolean;
+    loadMembers?: boolean;
   }): Promise<Messenger> {
     const qb = this.createMemberQb(userId).where(
       'messenger.id = :messengerId',
@@ -207,6 +323,7 @@ export class MessengerService {
       }
     );
     if (loadAdmin) qb.leftJoinAndSelect('messenger.admin', 'admin');
+    if (loadMembers) qb.leftJoinAndSelect('messenger.members', 'member');
 
     const messenger = await qb.getOne();
     if (!messenger)
@@ -214,6 +331,18 @@ export class MessengerService {
         'No messenger found with this id, or caller is not member of it'
       );
     return messenger;
+  }
+
+  async userCanAccess(userId: string, messengerId: string): Promise<boolean> {
+    const count = await this.repo
+      .createQueryBuilder('messenger')
+      .innerJoin('messenger.members', 'member', 'member.id = :userId', {
+        userId
+      })
+      .where('messenger.id = :messegerId', { messengerId })
+      .getCount();
+
+    return count !== 0;
   }
 
   private createMemberQb(userId: string): SelectQueryBuilder<Messenger> {

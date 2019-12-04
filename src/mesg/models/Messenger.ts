@@ -21,9 +21,11 @@ export class Messenger extends Node {
   @Column()
   title!: string;
 
+  @Field(_type => User)
   @ManyToOne(_with => User, { lazy: true, onDelete: 'CASCADE' })
   admin!: Lazy<User>;
 
+  @Field(_type => User)
   @ManyToMany(_with => User, { lazy: true })
   @JoinTable()
   members!: Lazy<User[]>;

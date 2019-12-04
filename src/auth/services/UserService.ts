@@ -6,7 +6,7 @@ import { compare, hash } from 'bcryptjs';
 import { Context } from 'Context';
 import { Arg, Ctx, Mutation, Query, Resolver } from 'type-graphql';
 import { Inject, Service } from 'typedi';
-import { Repository, In } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { InjectRepository } from 'typeorm-typedi-extensions';
 import { JwtWhitelistService } from './JwtWhitelistService';
 import { SessionService } from './SessionService';

@@ -1,13 +1,13 @@
-import { ApolloServer, PubSub } from 'apollo-server-express';
+import { ApolloServer } from 'apollo-server-express';
 import * as express from 'express';
-import { createServer, IncomingMessage, ServerResponse } from 'http';
+import { getContextFromHeader } from 'getContextFromHeader';
+import { createServer, IncomingMessage } from 'http';
+import { pubSub } from 'pubSub';
 import { buildSchemaSync } from 'type-graphql';
 import { Container } from 'typedi';
 import { createConnection, getConnectionOptions, useContainer } from 'typeorm';
-import { getContextFromHeader } from 'getContextFromHeader';
 
 useContainer(Container);
-const pubSub = new PubSub();
 
 const schema = buildSchemaSync({
   resolvers: [
@@ -24,12 +24,17 @@ const schema = buildSchemaSync({
 const apollo = new ApolloServer({
   schema,
   context: ({ req }: { req: IncomingMessage }) =>
-    getContextFromHeader(req.headers.authorization)
+    getContextFromHeader(req.headers.authorization),
+  subscriptions: {
+    onConnect: async connectionParams =>
+      getContextFromHeader((connectionParams as any).Authorization)
+  }
 });
 
 const app = express();
 apollo.applyMiddleware({ app, path: '/graphql' });
 const server = createServer(app);
+apollo.installSubscriptionHandlers(server);
 
 const bootstrap = async () => {
   const connectionOptions = await getConnectionOptions();
