@@ -1,8 +1,10 @@
 import { ApolloServer } from 'apollo-server-express';
 import * as express from 'express';
 import { getContextFromHeader } from 'getContextFromHeader';
+import { applyMiddleware } from 'graphql-middleware';
 import { createServer, IncomingMessage } from 'http';
 import { pubSub } from 'pubSub';
+import { schemaAuth } from 'schemaAuth';
 import { buildSchemaSync } from 'type-graphql';
 import { Container } from 'typedi';
 import { createConnection, getConnectionOptions, useContainer } from 'typeorm';
@@ -22,9 +24,10 @@ const schema = buildSchemaSync({
 });
 
 const apollo = new ApolloServer({
-  schema,
-  context: ({ req }: { req: IncomingMessage }) =>
-    getContextFromHeader(req.headers.authorization),
+  schema: applyMiddleware(schema, schemaAuth),
+  context: ({ req }: { req: IncomingMessage }) => {
+    return getContextFromHeader(req.headers.authorization);
+  },
   subscriptions: {
     onConnect: async connectionParams =>
       getContextFromHeader((connectionParams as any).Authorization)

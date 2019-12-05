@@ -4,17 +4,18 @@ import { User } from 'auth/models/User';
 import { Context } from 'Context';
 import { randomBytes as randomBytesCB } from 'crypto';
 import { sign as signCB } from 'jsonwebtoken';
-import { Ctx, Mutation, Query, Resolver } from 'type-graphql';
+import { Ctx, Mutation, Query, Resolver, Arg } from 'type-graphql';
 import { Inject, Service } from 'typedi';
 import { Not, Repository } from 'typeorm';
 import { InjectRepository } from 'typeorm-typedi-extensions';
 import { promisify } from 'util';
 import { JwtWhitelistService } from './JwtWhitelistService';
+import { AuthenticationError } from 'apollo-server-express';
 
 const { JWT_SECRET } = process.env;
 
 const randomBytes = promisify(randomBytesCB);
-const sign = promisify<Context, string, string>(signCB);
+const sign = promisify<Context & { iat: number }, string, string>(signCB);
 
 @Service()
 @Resolver(_of => Session)
@@ -47,6 +48,21 @@ export class SessionService {
   async logOut(@Ctx() { sessionId }: Context): Promise<boolean> {
     await this.closeSession(sessionId);
     return true;
+  }
+
+  @Mutation(_returns => String)
+  async refreshAccessToken(
+    @Arg('refreshToken') refreshToken: string
+  ): Promise<string> {
+    const session = await this.repo.findOne({
+      where: { refreshToken },
+      relations: ['user']
+    });
+    if (!session) throw new AuthenticationError('Invalid refreshToken');
+    return SessionService.generateAccessToken({
+      sessionId: session.id,
+      callerId: (await session.user).id
+    });
   }
 
   async openSession(user: User): Promise<Tokens> {
@@ -89,6 +105,6 @@ export class SessionService {
   }
 
   static generateAccessToken(ctx: Context): Promise<string> {
-    return sign(ctx, JWT_SECRET!);
+    return sign({ ...ctx, iat: Math.floor(Date.now() / 1000) }, JWT_SECRET!);
   }
 }

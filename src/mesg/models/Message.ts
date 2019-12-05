@@ -16,7 +16,7 @@ export class Message extends Node {
   messenger!: Lazy<Messenger>;
 
   @Field(_type => User)
-  @ManyToOne(_with => User, { lazy: true })
+  @ManyToOne(_with => User, { lazy: true, onDelete: 'CASCADE' })
   sender!: Lazy<User>;
 
   @Field()

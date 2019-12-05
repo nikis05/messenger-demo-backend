@@ -52,6 +52,7 @@ type Mutation {
 
   """Logs caller out"""
   logOut: Boolean!
+  refreshAccessToken(refreshToken: String!): String!
 
   """Registers new user in the system"""
   signUp(
